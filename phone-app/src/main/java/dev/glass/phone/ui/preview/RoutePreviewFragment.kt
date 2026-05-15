@@ -13,6 +13,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.button.MaterialButtonToggleGroup
 import dev.glass.phone.R
 import dev.glass.phone.gps.LocationProvider
 import dev.glass.phone.render.MapDataSource
@@ -20,6 +21,7 @@ import dev.glass.phone.ride.RideService
 import dev.glass.phone.routing.BRouterClient
 import dev.glass.phone.routing.GpxTurnExtractor
 import dev.glass.phone.routing.LatLng
+import dev.glass.phone.routing.NavigationMode
 import dev.glass.phone.routing.RoutingException
 import dev.glass.phone.ui.RideViewModel
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +53,37 @@ class RoutePreviewFragment : Fragment(R.layout.fragment_route_preview) {
         val status = view.findViewById<TextView>(R.id.status)
         val backBtn = view.findViewById<MaterialButton>(R.id.back_button)
         val startBtn = view.findViewById<MaterialButton>(R.id.start_button)
+        val modeToggle = view.findViewById<MaterialButtonToggleGroup>(R.id.mode_toggle)
+
+        val initialModeId = when (viewModel.mode.value) {
+            NavigationMode.CYCLING -> R.id.mode_cycle
+            NavigationMode.WALKING -> R.id.mode_walk
+            NavigationMode.DRIVING -> R.id.mode_drive
+        }
+        modeToggle.check(initialModeId)
+        modeToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val newMode = when (checkedId) {
+                R.id.mode_walk -> NavigationMode.WALKING
+                R.id.mode_drive -> NavigationMode.DRIVING
+                else -> NavigationMode.CYCLING
+            }
+            if (newMode == viewModel.mode.value) return@addOnButtonCheckedListener
+            viewModel.setMode(newMode)
+            // Recompute the current route under the new mode (if we already had a destination).
+            val current = viewModel.route.value
+            val destination = when (current) {
+                is RideViewModel.RouteState.Ready -> current.destination
+                is RideViewModel.RouteState.Selected -> current.destination
+                else -> null
+            }
+            val origin = when (current) {
+                is RideViewModel.RouteState.Ready -> current.origin
+                is RideViewModel.RouteState.Selected -> current.origin
+                else -> null
+            }
+            if (destination != null) computeRoute(destination, origin)
+        }
 
         backBtn.setOnClickListener { viewModel.onRideStopped() }
         startBtn.setOnClickListener {
@@ -141,8 +174,9 @@ class RoutePreviewFragment : Fragment(R.layout.fragment_route_preview) {
                 located
             }
             try {
+                val mode = viewModel.mode.value
                 val gpx = withContext(Dispatchers.IO) {
-                    BRouterClient(requireContext().applicationContext).route(from, destination.location)
+                    BRouterClient(requireContext().applicationContext).route(from, destination.location, mode)
                 }
                 val parsed = withContext(Dispatchers.Default) { GpxTurnExtractor().parse(gpx) }
                 viewModel.onReady(
@@ -151,6 +185,7 @@ class RoutePreviewFragment : Fragment(R.layout.fragment_route_preview) {
                         destination = destination,
                         track = parsed.track,
                         turns = parsed.turns,
+                        mode = mode,
                     ),
                 )
             } catch (t: RoutingException) {

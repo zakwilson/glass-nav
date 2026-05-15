@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Glass Cycling</string>
+    <string name="app_name">Glass Nav</string>
+    <string name="glass_voice_command_start">start navigation</string>
     <string name="menu_stop_nav">Stop navigation</string>
     <string name="status_waiting">Waiting for phone…</string>
     <string name="status_connected">Connected</string>

@@ -13,4 +13,7 @@
     <string name="ride_channel_name">Ride pipeline</string>
     <string name="search_no_results">No results</string>
     <string name="search_error">Search failed: %1$s</string>
+    <string name="mode_cycling">Cycle</string>
+    <string name="mode_walking">Walk</string>
+    <string name="mode_driving">Drive</string>
 </resources>

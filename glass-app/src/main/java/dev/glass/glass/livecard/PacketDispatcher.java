@@ -19,9 +19,13 @@ import java.util.Map;
 public final class PacketDispatcher implements Transport.Listener {
     private static final String TAG = "PacketDispatcher";
 
+    /** Distance at which we consider the rider to be "approaching" a turn (see PLAN.md §MVP-flow). */
+    private static final int APPROACH_THRESHOLD_M = 150;
+
     private final NavLiveCardService service;
     private final Map<Long, Packet.TurnBundle> cache = new HashMap<>();
     private long currentRouteId = -1;
+    private int activeTurnIndex = -1;
 
     public PacketDispatcher(NavLiveCardService service) {
         this.service = service;
@@ -49,6 +53,16 @@ public final class PacketDispatcher implements Transport.Listener {
                 Log.d(TAG, "PROGRESS without cached TURN_BUNDLE for #" + pr.turnIndex);
                 return;
             }
+            // If the active turn index advanced, the previous turn has been passed — release the
+            // display before deciding whether to wake for the new turn.
+            if (activeTurnIndex != -1 && pr.turnIndex != activeTurnIndex) {
+                service.onTurnPassed();
+                activeTurnIndex = -1;
+            }
+            if (pr.distanceToTurnM <= APPROACH_THRESHOLD_M) {
+                service.onApproachingTurn(pr.turnIndex);
+                activeTurnIndex = pr.turnIndex;
+            }
             String distance = formatDistance(pr.distanceToTurnM);
             String instruction = tb.instructionText;
             Log.i(TAG, "PROGRESS #" + pr.turnIndex + " " + distance);
@@ -56,6 +70,8 @@ public final class PacketDispatcher implements Transport.Listener {
         } else if (p instanceof Packet.RouteEnd) {
             Packet.RouteEnd re = (Packet.RouteEnd) p;
             Log.i(TAG, "ROUTE_END id=" + re.routeId + " " + re.reason);
+            service.onTurnPassed();
+            activeTurnIndex = -1;
             service.updateRemoteViews(null, "Done", "");
             cache.clear();
             currentRouteId = -1;
@@ -64,6 +80,8 @@ public final class PacketDispatcher implements Transport.Listener {
 
     @Override public void onDisconnected(Throwable cause) {
         Log.w(TAG, "disconnected: " + (cause == null ? "clean EOF" : cause.getMessage()));
+        service.onTurnPassed();
+        activeTurnIndex = -1;
         service.updateRemoteViews(null, "Phone disconnected", "");
     }
 

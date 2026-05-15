@@ -81,12 +81,20 @@ class SnippetRenderer(
      */
     @Synchronized
     @Throws(IOException::class)
-    fun render(center: LatLng, zoom: Byte = DEFAULT_ZOOM, arrowRotationDeg: Float? = null): ByteArray {
+    fun render(
+        center: LatLng,
+        zoom: Byte = DEFAULT_ZOOM,
+        arrowRotationDeg: Float? = null,
+        track: List<LatLng> = emptyList(),
+    ): ByteArray {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         try {
             val canvas = Canvas(bitmap)
             canvas.drawColor(Color.parseColor("#1A1A1A"))
             paintTilesInto(canvas, center, zoom)
+            if (track.isNotEmpty()) {
+                drawTrack(canvas, center, zoom, track)
+            }
             if (arrowRotationDeg != null) {
                 drawArrow(canvas, arrowRotationDeg)
             } else {
@@ -135,6 +143,44 @@ class SnippetRenderer(
                 }
             }
         }
+    }
+
+    private fun drawTrack(canvas: Canvas, center: LatLng, zoom: Byte, track: List<LatLng>) {
+        val tileSize = displayModel.tileSize
+        val mapSize = MercatorProjection.getMapSize(zoom, tileSize)
+        val cx = MercatorProjection.longitudeToPixelX(center.lon, mapSize)
+        val cy = MercatorProjection.latitudeToPixelY(center.lat, mapSize)
+        val originX = cx - width / 2.0
+        val originY = cy - height / 2.0
+
+        val path = Path()
+        var moved = false
+        for (p in track) {
+            val px = (MercatorProjection.longitudeToPixelX(p.lon, mapSize) - originX).toFloat()
+            val py = (MercatorProjection.latitudeToPixelY(p.lat, mapSize) - originY).toFloat()
+            if (!moved) {
+                path.moveTo(px, py)
+                moved = true
+            } else {
+                path.lineTo(px, py)
+            }
+        }
+        val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 10f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = Color.parseColor("#80000000")
+        }
+        val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 6f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = Color.parseColor("#3B82F6")
+        }
+        canvas.drawPath(path, outline)
+        canvas.drawPath(path, stroke)
     }
 
     private fun drawArrow(canvas: Canvas, rotationDeg: Float) {

@@ -2,8 +2,10 @@ package dev.glass.glass.livecard;
 
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.util.Log;
 import android.widget.RemoteViews;
 
@@ -28,11 +30,23 @@ public class NavLiveCardService extends Service {
     private LiveCard liveCard;
     private RemoteViews views;
     private Transport transport;
+    private PowerManager.WakeLock screenWake;
+    private int approachingTurnIndex = -1;
 
     @Override
     public void onCreate() {
         super.onCreate();
         Log.i(TAG, "onCreate");
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm != null) {
+            // SCREEN_BRIGHT_WAKE_LOCK is deprecated on modern Android but is the standard
+            // mechanism on Glass XE (API 19) to bring the display out of dim/off from a
+            // non-Activity component. ACQUIRE_CAUSES_WAKEUP forces an immediate wake.
+            screenWake = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                TAG + ":turnApproach");
+            screenWake.setReferenceCounted(false);
+        }
         views = new RemoteViews(getPackageName(), R.layout.livecard_nav);
         try {
             liveCard = new LiveCard(this, LIVECARD_TAG);
@@ -80,6 +94,49 @@ public class NavLiveCardService extends Service {
         }
     }
 
+    /**
+     * Called by {@code PacketDispatcher} when the rider has entered the approach radius for a
+     * turn. Wakes the display and brings the LiveCard to the front of the timeline. Idempotent
+     * for the same {@code turnIndex} so it can be invoked on every PROGRESS packet.
+     */
+    public void onApproachingTurn(int turnIndex) {
+        if (approachingTurnIndex == turnIndex) return;
+        approachingTurnIndex = turnIndex;
+        Log.i(TAG, "approaching turn #" + turnIndex + " — waking display");
+        if (liveCard != null) {
+            try {
+                liveCard.navigate();
+            } catch (Throwable t) {
+                Log.w(TAG, "liveCard.navigate failed: " + t.getMessage());
+            }
+        }
+        if (screenWake != null && !screenWake.isHeld()) {
+            try {
+                screenWake.acquire();
+            } catch (Throwable t) {
+                Log.w(TAG, "wakeLock.acquire failed: " + t.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Called by {@code PacketDispatcher} when the active turn has been passed (turn index
+     * advanced) or the route has ended. Releases the wake lock so the screen can dim on its
+     * normal timeout. Idempotent.
+     */
+    public void onTurnPassed() {
+        if (approachingTurnIndex == -1) return;
+        Log.i(TAG, "turn #" + approachingTurnIndex + " passed — releasing display");
+        approachingTurnIndex = -1;
+        if (screenWake != null && screenWake.isHeld()) {
+            try {
+                screenWake.release();
+            } catch (Throwable t) {
+                Log.w(TAG, "wakeLock.release failed: " + t.getMessage());
+            }
+        }
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         return START_STICKY;
@@ -88,6 +145,11 @@ public class NavLiveCardService extends Service {
     @Override
     public void onDestroy() {
         Log.i(TAG, "onDestroy");
+        if (screenWake != null) {
+            try { if (screenWake.isHeld()) screenWake.release(); } catch (Throwable ignored) {}
+            screenWake = null;
+        }
+        approachingTurnIndex = -1;
         if (transport != null) {
             try { transport.stop(); } catch (Throwable ignored) {}
             transport = null;

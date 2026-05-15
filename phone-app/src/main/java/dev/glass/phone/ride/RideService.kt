@@ -49,6 +49,7 @@ class RideService : Service() {
     interface UiObserver {
         fun onConnectionStateChange(connected: Boolean, status: String)
         fun onTurnUpdate(text: String, distanceM: Int)
+        fun onLocationUpdate(location: LatLng, bearingDeg: Float?) {}
     }
 
     override fun onCreate() {
@@ -114,7 +115,9 @@ class RideService : Service() {
         for ((idx, turn) in route.turns.withIndex()) {
             val png = if (r != null) {
                 try {
-                    withContext(Dispatchers.Default) { r.render(LatLng(turn.lat, turn.lon)) }
+                    withContext(Dispatchers.Default) {
+                        r.render(LatLng(turn.lat, turn.lon), track = route.track)
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "render failed for turn $idx", e)
                     EMPTY_BYTES
@@ -138,6 +141,7 @@ class RideService : Service() {
         var lastTurnIdx = -1
         source.fixes().collect { fix ->
             val match = matcher.match(fix.location)
+            uiObserver?.onLocationUpdate(fix.location, fix.bearingDeg)
             t.send(
                 Packet.Progress(
                     routeId,

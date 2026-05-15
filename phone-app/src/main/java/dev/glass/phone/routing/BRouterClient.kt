@@ -32,7 +32,7 @@ class BRouterClient(private val context: Context) {
     suspend fun route(
         start: LatLng,
         end: LatLng,
-        profile: String = "trekking",
+        mode: NavigationMode = NavigationMode.CYCLING,
         timeoutMs: Long = 30_000,
     ): String {
         val service = bind() ?: throw RoutingException(
@@ -40,8 +40,8 @@ class BRouterClient(private val context: Context) {
         try {
             val params = Bundle().apply {
                 putString("lonlats", "${start.lon},${start.lat}|${end.lon},${end.lat}")
-                putString("profile", profile)
-                putString("v", "bicycle")
+                putString("profile", mode.profile)
+                putString("v", mode.vehicle)
                 putString("trackFormat", "gpx")
                 putString("turnInstructionFormat", "osmand")
                 putString("timode", "3") // osmand-style
