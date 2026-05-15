@@ -72,7 +72,8 @@ public final class PacketDispatcher implements Transport.Listener {
             Log.i(TAG, "ROUTE_END id=" + re.routeId + " " + re.reason);
             service.onTurnPassed();
             activeTurnIndex = -1;
-            service.updateRemoteViews(null, "Done", "");
+            String message = (re.reason == Packet.RouteEnd.Reason.OFFROUTE) ? "Rerouting…" : "Done";
+            service.updateRemoteViews(null, message, "");
             cache.clear();
             currentRouteId = -1;
         }

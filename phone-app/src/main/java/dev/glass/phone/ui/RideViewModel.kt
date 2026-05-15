@@ -46,4 +46,5 @@ class RideViewModel : ViewModel() {
     fun onFailed(message: String) { _route.value = RouteState.Failed(message) }
     fun onRideStarted() { (_route.value as? RouteState.Ready)?.let { _route.value = RouteState.Active(it) } }
     fun onRideStopped() { _route.value = RouteState.Idle }
+    fun onRouteReplaced(r: RouteState.Ready) { _route.value = RouteState.Active(r) }
 }

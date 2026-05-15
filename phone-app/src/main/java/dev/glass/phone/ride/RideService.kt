@@ -16,7 +16,10 @@ import dev.glass.phone.gps.MockGpsSource
 import dev.glass.phone.gps.RealGpsSource
 import dev.glass.phone.render.MapDataSource
 import dev.glass.phone.render.SnippetRenderer
+import dev.glass.phone.routing.BRouterClient
+import dev.glass.phone.routing.GpxTurnExtractor
 import dev.glass.phone.routing.LatLng
+import dev.glass.phone.routing.RoutingException
 import dev.glass.phone.routing.Turn
 import dev.glass.phone.routing.glyph
 import dev.glass.phone.transport.TransportFactory
@@ -28,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,7 +54,19 @@ class RideService : Service() {
         fun onConnectionStateChange(connected: Boolean, status: String)
         fun onTurnUpdate(text: String, distanceM: Int)
         fun onLocationUpdate(location: LatLng, bearingDeg: Float?) {}
+        /** Non-null message while reroute is in flight or just completed; null clears it. */
+        fun onRerouteStateChange(message: String?) {}
+        /** Called after a successful reroute so the phone UI can swap its on-screen polyline. */
+        fun onRouteReplaced(route: RideViewModel.RouteState.Ready) {}
     }
+
+    private sealed class StreamOutcome {
+        object Arrived : StreamOutcome()
+        object SourceEnded : StreamOutcome()
+        data class OffRoute(val from: LatLng) : StreamOutcome()
+    }
+
+    private class StopCollection(val outcome: StreamOutcome) : RuntimeException()
 
     override fun onCreate() {
         super.onCreate()
@@ -91,18 +107,70 @@ class RideService : Service() {
         }
     }
 
-    private fun startPipeline(t: Transport, route: RideViewModel.RouteState.Ready) {
+    private fun startPipeline(t: Transport, initialRoute: RideViewModel.RouteState.Ready) {
         pipelineJob?.cancel()
         pipelineJob = scope.launch {
-            val routeId = (System.currentTimeMillis() and 0xffffffffL)
+            var route = initialRoute
+            var routeId = freshRouteId()
             try {
                 pushRoute(t, routeId, route)
-                streamProgress(t, routeId, route)
-                t.send(Packet.RouteEnd(routeId, Packet.RouteEnd.Reason.ARRIVED))
+                while (true) {
+                    when (val outcome = streamProgress(t, routeId, route)) {
+                        is StreamOutcome.Arrived,
+                        is StreamOutcome.SourceEnded -> {
+                            t.send(Packet.RouteEnd(routeId, Packet.RouteEnd.Reason.ARRIVED))
+                            return@launch
+                        }
+                        is StreamOutcome.OffRoute -> {
+                            uiObserver?.onRerouteStateChange("Off route — recomputing…")
+                            val newRoute = try {
+                                computeReroute(route, outcome.from)
+                            } catch (e: RoutingException) {
+                                Log.w(TAG, "reroute failed: ${e.message}")
+                                null
+                            } catch (e: Exception) {
+                                Log.w(TAG, "reroute failed", e)
+                                null
+                            }
+                            if (newRoute == null) {
+                                uiObserver?.onRerouteStateChange("Reroute failed — retrying in ${REROUTE_COOLDOWN_MS / 1000}s")
+                                delay(REROUTE_COOLDOWN_MS)
+                                uiObserver?.onRerouteStateChange(null)
+                                // Re-enter streamProgress with the same (stale) route; a fresh
+                                // RouteMatcher is constructed inside, so the off-route counter
+                                // restarts and we won't immediately re-fire on the same fix.
+                                continue
+                            }
+                            t.send(Packet.RouteEnd(routeId, Packet.RouteEnd.Reason.OFFROUTE))
+                            route = newRoute
+                            routeId = freshRouteId()
+                            pushRoute(t, routeId, route)
+                            uiObserver?.onRouteReplaced(route)
+                            uiObserver?.onRerouteStateChange(null)
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "pipeline failed", e)
             }
         }
+    }
+
+    private fun freshRouteId(): Long = System.currentTimeMillis() and 0xffffffffL
+
+    private suspend fun computeReroute(
+        current: RideViewModel.RouteState.Ready,
+        from: LatLng,
+    ): RideViewModel.RouteState.Ready {
+        val gpx = withContext(Dispatchers.IO) {
+            BRouterClient(applicationContext).route(from, current.destination.location, current.mode)
+        }
+        val parsed = withContext(Dispatchers.Default) { GpxTurnExtractor().parse(gpx) }
+        require(parsed.track.size >= 2 && parsed.turns.isNotEmpty()) {
+            "reroute returned degenerate route (track=${parsed.track.size}, turns=${parsed.turns.size})"
+        }
+        Log.i(TAG, "rerouted: ${parsed.track.size} pts, ${parsed.turns.size} turns")
+        return current.copy(origin = from, track = parsed.track, turns = parsed.turns)
     }
 
     private suspend fun pushRoute(t: Transport, routeId: Long, route: RideViewModel.RouteState.Ready) {
@@ -135,34 +203,42 @@ class RideService : Service() {
         }
     }
 
-    private suspend fun streamProgress(t: Transport, routeId: Long, route: RideViewModel.RouteState.Ready) {
+    private suspend fun streamProgress(
+        t: Transport,
+        routeId: Long,
+        route: RideViewModel.RouteState.Ready,
+    ): StreamOutcome {
         val source = currentGpsSource(route)
         val matcher = RouteMatcher(route.track, route.turns)
         var lastTurnIdx = -1
-        source.fixes().collect { fix ->
-            val match = matcher.match(fix.location)
-            uiObserver?.onLocationUpdate(fix.location, fix.bearingDeg)
-            t.send(
-                Packet.Progress(
-                    routeId,
-                    match.nextTurnIndex,
-                    match.distanceToTurnM.coerceAtMost(0xffff),
-                    bearingDelta(fix, route.turns.getOrNull(match.nextTurnIndex)),
-                ),
-            )
-            if (match.nextTurnIndex != lastTurnIdx) {
-                lastTurnIdx = match.nextTurnIndex
+        try {
+            source.fixes().collect { fix ->
+                val match = matcher.match(fix.location)
+                uiObserver?.onLocationUpdate(fix.location, fix.bearingDeg)
+                if (match.offRoute) {
+                    Log.i(TAG, "off-route by ${match.perpendicularDistanceM.toInt()}m — reroute")
+                    throw StopCollection(StreamOutcome.OffRoute(fix.location))
+                }
+                t.send(
+                    Packet.Progress(
+                        routeId,
+                        match.nextTurnIndex,
+                        match.distanceToTurnM.coerceAtMost(0xffff),
+                        bearingDelta(fix, route.turns.getOrNull(match.nextTurnIndex)),
+                    ),
+                )
+                if (match.nextTurnIndex != lastTurnIdx) lastTurnIdx = match.nextTurnIndex
                 val turn = route.turns[match.nextTurnIndex]
                 uiObserver?.onTurnUpdate(turn.kind.glyph(), match.distanceToTurnM)
-            } else {
-                val turn = route.turns[match.nextTurnIndex]
-                uiObserver?.onTurnUpdate(turn.kind.glyph(), match.distanceToTurnM)
+                if (match.distanceToTurnM == 0 && match.nextTurnIndex == route.turns.lastIndex) {
+                    Log.i(TAG, "arrived")
+                    throw StopCollection(StreamOutcome.Arrived)
+                }
             }
-            if (match.distanceToTurnM == 0 && match.nextTurnIndex == route.turns.lastIndex) {
-                Log.i(TAG, "arrived")
-                return@collect // exit
-            }
+        } catch (stop: StopCollection) {
+            return stop.outcome
         }
+        return StreamOutcome.SourceEnded
     }
 
     private fun currentGpsSource(route: RideViewModel.RouteState.Ready): GpsSource {
@@ -251,6 +327,7 @@ class RideService : Service() {
         const val TAG = "RideService"
         private const val NOTIFICATION_ID = 0xCAFE
         private const val CHANNEL_ID = "ride"
+        private const val REROUTE_COOLDOWN_MS = 30_000L
         private val EMPTY_BYTES = ByteArray(0)
 
         @Volatile var pendingRoute: RideViewModel.RouteState.Ready? = null

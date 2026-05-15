@@ -37,6 +37,8 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
     private var rendererLayer: TileRendererLayer? = null
     private var positionMarker: Circle? = null
     private var hasRecenteredOnFirstFix = false
+    private var routePolyline: Polyline? = null
+    private var lastConnectionStatus: String = ""
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         AndroidGraphicFactory.createInstance(requireActivity().application)
@@ -61,6 +63,7 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
 
         RideService.uiObserver = object : RideService.UiObserver {
             override fun onConnectionStateChange(connected: Boolean, status: String) {
+                lastConnectionStatus = status
                 statusText.post { statusText.text = status }
             }
             override fun onTurnUpdate(text: String, distanceM: Int) {
@@ -71,6 +74,17 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
             }
             override fun onLocationUpdate(location: LatLng, bearingDeg: Float?) {
                 view.post { updatePositionMarker(location) }
+            }
+            override fun onRerouteStateChange(message: String?) {
+                statusText.post {
+                    statusText.text = message ?: lastConnectionStatus
+                }
+            }
+            override fun onRouteReplaced(route: RideViewModel.RouteState.Ready) {
+                view.post {
+                    viewModel.onRouteReplaced(route)
+                    redrawRoute(route.track)
+                }
             }
         }
     }
@@ -111,16 +125,23 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
     }
 
     private fun drawCurrentRoute() {
-        val mv = mapView ?: return
         val state = viewModel.route.value
         val ready = when (state) {
             is RideViewModel.RouteState.Active -> state.ready
             is RideViewModel.RouteState.Ready -> state
             else -> return
         }
-        val track = ready.track
-        if (track.isEmpty()) return
+        if (ready.track.isEmpty()) return
+        redrawRoute(ready.track)
+        val mv = mapView ?: return
+        val origin = ready.origin
+        mv.setCenter(LatLong(origin.lat, origin.lon))
+        mv.setZoomLevel(15)
+    }
 
+    private fun redrawRoute(track: List<LatLng>) {
+        val mv = mapView ?: return
+        routePolyline?.let { mv.layerManager.layers.remove(it) }
         val paint = AndroidGraphicFactory.INSTANCE.createPaint()
         paint.setColor(Color.RED)
         paint.setStyle(Style.STROKE)
@@ -128,10 +149,7 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
         val poly = Polyline(paint, AndroidGraphicFactory.INSTANCE)
         poly.latLongs.addAll(track.map { LatLong(it.lat, it.lon) })
         mv.layerManager.layers.add(poly)
-
-        val origin = ready.origin
-        mv.setCenter(LatLong(origin.lat, origin.lon))
-        mv.setZoomLevel(15)
+        routePolyline = poly
     }
 
     private fun updatePositionMarker(location: LatLng) {
@@ -173,6 +191,7 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
         mapView = null
         rendererLayer = null
         positionMarker = null
+        routePolyline = null
         hasRecenteredOnFirstFix = false
     }
 }
