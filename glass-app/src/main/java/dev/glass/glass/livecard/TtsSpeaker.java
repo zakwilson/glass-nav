@@ -18,7 +18,6 @@ import dev.glass.protocol.TurnKind;
 public final class TtsSpeaker {
     private static final String TAG = "TtsSpeaker";
 
-    /** Distance used in the pre-announce utterance. Kept in sync with PacketDispatcher.APPROACH_THRESHOLD_M. */
     public enum Cue { APPROACH, IMMINENT }
 
     private TextToSpeech tts;

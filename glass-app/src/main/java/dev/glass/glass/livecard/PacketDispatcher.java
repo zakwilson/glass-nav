@@ -19,10 +19,22 @@ import java.util.Map;
 public final class PacketDispatcher implements Transport.Listener {
     private static final String TAG = "PacketDispatcher";
 
-    /** Distance at which we consider the rider to be "approaching" a turn (see PLAN.md §MVP-flow). */
-    private static final int APPROACH_THRESHOLD_M = 150;
+    /**
+     * Approach threshold scales with speed to give roughly a constant ~18 seconds of lead time:
+     * 30 m floor for walking, ~150 m at 30 km/h cycling, ~500 m at 100 km/h driving.
+     */
+    private static final int MIN_APPROACH_M = 30;
+    private static final double APPROACH_M_PER_KMH = 5.0;
     /** Distance at which we speak the "turn now" cue. */
     private static final int IMMINENT_THRESHOLD_M = 30;
+
+    static int approachThresholdM(int speedKmh) {
+        return Math.max(MIN_APPROACH_M, (int) Math.round(speedKmh * APPROACH_M_PER_KMH));
+    }
+
+    private static int roundToTen(int m) {
+        return ((m + 5) / 10) * 10;
+    }
 
     private final NavLiveCardService service;
     private final Map<Long, Packet.TurnBundle> cache = new HashMap<>();
@@ -66,13 +78,14 @@ public final class PacketDispatcher implements Transport.Listener {
                 service.onTurnPassed();
                 activeTurnIndex = -1;
             }
-            if (pr.distanceToTurnM <= APPROACH_THRESHOLD_M) {
+            int approachThresholdM = approachThresholdM(pr.speedKmh);
+            if (pr.distanceToTurnM <= approachThresholdM) {
                 service.onApproachingTurn(pr.turnIndex);
                 activeTurnIndex = pr.turnIndex;
                 if (lastApproachSpokenTurn != pr.turnIndex) {
                     lastApproachSpokenTurn = pr.turnIndex;
                     service.speak(
-                        TtsSpeaker.utteranceFor(TtsSpeaker.Cue.APPROACH, tb.kind, tb.instructionText, APPROACH_THRESHOLD_M),
+                        TtsSpeaker.utteranceFor(TtsSpeaker.Cue.APPROACH, tb.kind, tb.instructionText, roundToTen(pr.distanceToTurnM)),
                         "approach-" + pr.turnIndex);
                 }
             }

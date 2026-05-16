@@ -220,12 +220,14 @@ class RideService : Service() {
                     Log.i(TAG, "off-route by ${match.perpendicularDistanceM.toInt()}m — reroute")
                     throw StopCollection(StreamOutcome.OffRoute(fix.location))
                 }
+                val speedKmh = ((fix.speedMps ?: 0f) * 3.6f).toInt().coerceIn(0, 0xffff)
                 t.send(
                     Packet.Progress(
                         routeId,
                         match.nextTurnIndex,
                         match.distanceToTurnM.coerceAtMost(0xffff),
                         bearingDelta(fix, route.turns.getOrNull(match.nextTurnIndex)),
+                        speedKmh,
                     ),
                 )
                 if (match.nextTurnIndex != lastTurnIdx) lastTurnIdx = match.nextTurnIndex

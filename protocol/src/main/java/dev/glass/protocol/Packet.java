@@ -97,12 +97,15 @@ public abstract class Packet {
         public final int turnIndex;           // uint16
         public final int distanceToTurnM;     // uint16
         public final short bearingDelta100;   // int16, centidegrees
+        public final int speedKmh;            // uint16
 
-        public Progress(long routeId, int turnIndex, int distanceToTurnM, short bearingDelta100) {
+        public Progress(long routeId, int turnIndex, int distanceToTurnM, short bearingDelta100,
+                        int speedKmh) {
             this.routeId = routeId;
             this.turnIndex = turnIndex;
             this.distanceToTurnM = distanceToTurnM;
             this.bearingDelta100 = bearingDelta100;
+            this.speedKmh = speedKmh;
         }
 
         @Override public PacketType type() { return PacketType.PROGRESS; }
@@ -111,14 +114,15 @@ public abstract class Packet {
             if (!(o instanceof Progress)) return false;
             Progress p = (Progress) o;
             return routeId == p.routeId && turnIndex == p.turnIndex
-                && distanceToTurnM == p.distanceToTurnM && bearingDelta100 == p.bearingDelta100;
+                && distanceToTurnM == p.distanceToTurnM && bearingDelta100 == p.bearingDelta100
+                && speedKmh == p.speedKmh;
         }
         @Override public int hashCode() {
-            return Objects.hash(routeId, turnIndex, distanceToTurnM, bearingDelta100);
+            return Objects.hash(routeId, turnIndex, distanceToTurnM, bearingDelta100, speedKmh);
         }
         @Override public String toString() {
             return "Progress(id=" + routeId + ", #" + turnIndex + ", " + distanceToTurnM
-                + "m, bearing=" + (bearingDelta100 / 100.0) + "°)";
+                + "m, bearing=" + (bearingDelta100 / 100.0) + "°, " + speedKmh + "km/h)";
         }
     }
 

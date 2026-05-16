@@ -19,7 +19,7 @@ class FrameReaderTest {
         Packet[] packets = {
             new Packet.Hello(1),
             new Packet.RouteStart(7L, 5, "Berlin"),
-            new Packet.Progress(7L, 0, 200, (short) 0),
+            new Packet.Progress(7L, 0, 200, (short) 0, 25),
             new Packet.RouteEnd(7L, Packet.RouteEnd.Reason.ARRIVED),
         };
         for (Packet p : packets) stream.write(Codec.encode(p));

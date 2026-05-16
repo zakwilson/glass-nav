@@ -69,7 +69,7 @@ class PairEmulatorE2eTest {
             for (int t = 0; t < 6; t++) {
                 int turnIdx = Math.min(t / 2, totalTurns - 1);
                 int distToTurn = Math.max(0, 100 - t * 15);
-                client.send(new Packet.Progress(routeId, turnIdx, distToTurn, (short) 0));
+                client.send(new Packet.Progress(routeId, turnIdx, distToTurn, (short) 0, 20));
                 Thread.sleep(200);
             }
 

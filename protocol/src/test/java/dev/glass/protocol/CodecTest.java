@@ -45,7 +45,7 @@ class CodecTest {
     }
 
     @Test void roundTripProgress() throws Exception {
-        Packet.Progress in = new Packet.Progress(7L, 3, 142, (short) -2750);
+        Packet.Progress in = new Packet.Progress(7L, 3, 142, (short) -2750, 28);
         assertThat(Codec.decode(Codec.encode(in))).isEqualTo(in);
     }
 

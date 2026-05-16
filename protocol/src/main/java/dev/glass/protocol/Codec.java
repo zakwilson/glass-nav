@@ -115,6 +115,7 @@ public final class Codec {
                 out.writeShort(pr.turnIndex & 0xffff);
                 out.writeShort(pr.distanceToTurnM & 0xffff);
                 out.writeShort(pr.bearingDelta100);
+                out.writeShort(pr.speedKmh & 0xffff);
                 break;
             }
             case ROUTE_END: {
@@ -168,7 +169,8 @@ public final class Codec {
                 int turnIndex = in.readUnsignedShort();
                 int distToTurn = in.readUnsignedShort();
                 short bearing100 = in.readShort();
-                return new Packet.Progress(routeId, turnIndex, distToTurn, bearing100);
+                int speedKmh = in.readUnsignedShort();
+                return new Packet.Progress(routeId, turnIndex, distToTurn, bearing100, speedKmh);
             }
             case ROUTE_END: {
                 long routeId = in.readInt() & 0xffffffffL;
