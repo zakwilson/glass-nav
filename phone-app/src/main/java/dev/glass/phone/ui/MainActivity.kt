@@ -42,6 +42,8 @@ class MainActivity : AppCompatActivity() {
                         is RideViewModel.RouteState.Idle -> showSearch()
                         is RideViewModel.RouteState.Selected,
                         is RideViewModel.RouteState.Computing,
+                        is RideViewModel.RouteState.Downloading,
+                        is RideViewModel.RouteState.NeedsStoragePermission,
                         is RideViewModel.RouteState.Ready,
                         is RideViewModel.RouteState.Failed -> showPreview()
                         is RideViewModel.RouteState.Active -> showRide()

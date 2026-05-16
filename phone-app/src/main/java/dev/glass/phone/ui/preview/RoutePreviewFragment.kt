@@ -2,11 +2,16 @@ package dev.glass.phone.ui.preview
 
 import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.lifecycle.Lifecycle
@@ -14,7 +19,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import dev.glass.phone.R
+import dev.glass.phone.data.RouteDataPrefetcher
 import dev.glass.phone.gps.LocationProvider
 import dev.glass.phone.render.MapDataSource
 import dev.glass.phone.ride.RideService
@@ -25,8 +32,10 @@ import dev.glass.phone.routing.NavigationMode
 import dev.glass.phone.routing.RoutingException
 import dev.glass.phone.ui.RideViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import org.mapsforge.core.graphics.Color as MfColor
 import org.mapsforge.core.graphics.Style
 import org.mapsforge.core.model.LatLong
@@ -44,6 +53,22 @@ class RoutePreviewFragment : Fragment(R.layout.fragment_route_preview) {
     private val viewModel: RideViewModel by activityViewModels()
     private var mapView: MapView? = null
     private var rendererLayer: TileRendererLayer? = null
+    private var prefetchJob: Job? = null
+    private var downloadDialog: DataDownloadDialogFragment? = null
+    private val sharedHttp: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+    private val storageSettingsLauncher: ActivityResultLauncher<Intent> =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            // On return, retry the pending route if it's still queued.
+            val state = viewModel.route.value
+            if (state is RideViewModel.RouteState.NeedsStoragePermission) {
+                computeRoute(state.destination, state.origin)
+            }
+        }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         AndroidGraphicFactory.createInstance(requireActivity().application)
@@ -141,17 +166,31 @@ class RoutePreviewFragment : Fragment(R.layout.fragment_route_preview) {
                         is RideViewModel.RouteState.Computing -> {
                             status.text = "Computing route…"
                             startBtn.isEnabled = false
+                            dismissDownloadDialog()
+                        }
+                        is RideViewModel.RouteState.Downloading -> {
+                            status.text = "Downloading ${state.label}…"
+                            startBtn.isEnabled = false
+                            showOrUpdateDownloadDialog(state)
+                        }
+                        is RideViewModel.RouteState.NeedsStoragePermission -> {
+                            status.text = "Storage access required"
+                            startBtn.isEnabled = false
+                            dismissDownloadDialog()
+                            showStoragePermissionDialog()
                         }
                         is RideViewModel.RouteState.Ready -> {
                             status.text = "Route ready: ${state.turns.size} turns"
                             startBtn.isEnabled = true
+                            dismissDownloadDialog()
                             drawRoute(state.track)
                         }
                         is RideViewModel.RouteState.Failed -> {
                             status.text = state.message
                             startBtn.isEnabled = false
+                            dismissDownloadDialog()
                         }
-                        else -> {}
+                        else -> { dismissDownloadDialog() }
                     }
                 }
             }
@@ -160,7 +199,8 @@ class RoutePreviewFragment : Fragment(R.layout.fragment_route_preview) {
 
     private fun computeRoute(destination: dev.glass.phone.ui.search.Place, origin: LatLng?) {
         viewModel.onComputing()
-        viewLifecycleOwner.lifecycleScope.launch {
+        prefetchJob?.cancel()
+        prefetchJob = viewLifecycleOwner.lifecycleScope.launch {
             val from = origin ?: run {
                 val located = withContext(Dispatchers.IO) {
                     LocationProvider(requireContext().applicationContext).getCurrentLocation()
@@ -173,6 +213,32 @@ class RoutePreviewFragment : Fragment(R.layout.fragment_route_preview) {
                 }
                 located
             }
+
+            // Ensure routing + map data are present before invoking BRouter.
+            val prefetcher = RouteDataPrefetcher(requireContext().applicationContext, sharedHttp)
+            val result = prefetcher.ensure(from, destination.location) { s ->
+                viewModel.onDownloading(
+                    RideViewModel.RouteState.Downloading(
+                        s.label, s.bytesDone, s.bytesTotal, s.fileIndex, s.fileCount,
+                    ),
+                )
+            }
+            when (result) {
+                is RouteDataPrefetcher.Result.NeedsAllFilesAccess -> {
+                    viewModel.onNeedsStoragePermission(destination, from)
+                    return@launch
+                }
+                is RouteDataPrefetcher.Result.Failed -> {
+                    viewModel.onFailed("Data download failed: ${result.message}")
+                    return@launch
+                }
+                is RouteDataPrefetcher.Result.Cancelled -> {
+                    viewModel.onFailed("Download cancelled.")
+                    return@launch
+                }
+                RouteDataPrefetcher.Result.Ok -> { /* fall through */ }
+            }
+            viewModel.onComputing()
             try {
                 val mode = viewModel.mode.value
                 val gpx = withContext(Dispatchers.IO) {
@@ -214,8 +280,54 @@ class RoutePreviewFragment : Fragment(R.layout.fragment_route_preview) {
         }
     }
 
+    private fun showOrUpdateDownloadDialog(state: RideViewModel.RouteState.Downloading) {
+        val existing = (childFragmentManager.findFragmentByTag(DataDownloadDialogFragment.TAG)
+            as? DataDownloadDialogFragment) ?: downloadDialog
+        if (existing != null && existing.isAdded) {
+            existing.update(state)
+            return
+        }
+        val dlg = DataDownloadDialogFragment().apply {
+            onCancel = {
+                prefetchJob?.cancel()
+                viewModel.onFailed("Download cancelled.")
+            }
+            update(state)
+        }
+        downloadDialog = dlg
+        dlg.show(childFragmentManager, DataDownloadDialogFragment.TAG)
+    }
+
+    private fun dismissDownloadDialog() {
+        val dlg = (childFragmentManager.findFragmentByTag(DataDownloadDialogFragment.TAG)
+            as? DataDownloadDialogFragment) ?: downloadDialog
+        dlg?.dismissAllowingStateLoss()
+        downloadDialog = null
+    }
+
+    private fun showStoragePermissionDialog() {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.data_permission_title)
+            .setMessage(R.string.data_permission_message)
+            .setPositiveButton(R.string.data_permission_open_settings) { _, _ ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                        data = Uri.parse("package:${requireContext().packageName}")
+                    }
+                    storageSettingsLauncher.launch(intent)
+                }
+            }
+            .setNegativeButton(R.string.cancel) { _, _ ->
+                viewModel.onFailed("Storage access not granted.")
+            }
+            .show()
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
+        prefetchJob?.cancel()
+        prefetchJob = null
+        downloadDialog = null
         mapView?.destroyAll()
         rendererLayer = null
         mapView = null

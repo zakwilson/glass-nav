@@ -23,6 +23,43 @@ class GeocodingClient(
 
     private val lastRequestNs = AtomicLong(0L)
 
+    data class ReverseResult(val countryCode: String?, val state: String?)
+
+    /**
+     * Reverse-geocode a coordinate. Returns the ISO-3166-1 alpha-2 country code (lowercase, e.g.
+     * `"de"`, `"us"`) and the first-order admin region (state/province) name if Photon returned
+     * one — e.g. `"California"`. Either field may be null.
+     */
+    @Throws(IOException::class)
+    fun reverse(lat: Double, lon: Double): ReverseResult? {
+        rateLimit()
+        val url = "$endpoint/reverse/".toHttpUrl().newBuilder().apply {
+            addQueryParameter("lat", lat.toString())
+            addQueryParameter("lon", lon.toString())
+            addQueryParameter("limit", "1")
+        }.build()
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", userAgent)
+            .header("Accept-Language", "en")
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw IOException("Photon ${resp.code} ${resp.message}")
+            return parseReverse(resp.body?.string().orEmpty())
+        }
+    }
+
+    /** Parses Photon `/reverse` response → [ReverseResult]. Public for tests. */
+    internal fun parseReverse(json: String): ReverseResult? {
+        if (json.isBlank()) return null
+        val features = JSONObject(json).optJSONArray("features") ?: return null
+        if (features.length() == 0) return null
+        val props = features.optJSONObject(0)?.optJSONObject("properties") ?: return null
+        val cc = props.optString("countrycode").trim().lowercase().takeIf { it.isNotEmpty() }
+        val state = props.optString("state").trim().takeIf { it.isNotEmpty() }
+        return ReverseResult(cc, state)
+    }
+
     @Throws(IOException::class)
     fun search(query: String, limit: Int = 10): List<Place> {
         if (query.isBlank()) return emptyList()

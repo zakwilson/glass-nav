@@ -18,6 +18,14 @@ class RideViewModel : ViewModel() {
         object Idle : RouteState()
         data class Selected(val destination: Place, val origin: LatLng?) : RouteState()
         object Computing : RouteState()
+        data class Downloading(
+            val label: String,
+            val bytesDone: Long,
+            val bytesTotal: Long,
+            val fileIndex: Int,
+            val fileCount: Int,
+        ) : RouteState()
+        data class NeedsStoragePermission(val destination: Place, val origin: LatLng?) : RouteState()
         data class Ready(
             val origin: LatLng,
             val destination: Place,
@@ -42,6 +50,10 @@ class RideViewModel : ViewModel() {
     fun setMode(mode: NavigationMode) { _mode.value = mode }
 
     fun onComputing() { _route.value = RouteState.Computing }
+    fun onDownloading(s: RouteState.Downloading) { _route.value = s }
+    fun onNeedsStoragePermission(destination: Place, origin: LatLng?) {
+        _route.value = RouteState.NeedsStoragePermission(destination, origin)
+    }
     fun onReady(r: RouteState.Ready) { _route.value = r }
     fun onFailed(message: String) { _route.value = RouteState.Failed(message) }
     fun onRideStarted() { (_route.value as? RouteState.Ready)?.let { _route.value = RouteState.Active(it) } }

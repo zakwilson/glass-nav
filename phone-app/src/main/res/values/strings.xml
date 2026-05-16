@@ -23,4 +23,12 @@
     <string name="history_clear_confirm_message">Remove all recent destinations? This cannot be undone.</string>
     <string name="history_clear_confirm_ok">Clear</string>
     <string name="cancel">Cancel</string>
+
+    <string name="data_download_title">Downloading map data…</string>
+    <string name="data_download_progress">%1$s — %2$d / %3$d MB (file %4$d/%5$d)</string>
+    <string name="data_download_progress_unknown">%1$s — %2$d MB (file %3$d/%4$d)</string>
+    <string name="data_permission_title">Allow file access</string>
+    <string name="data_permission_message">Glass Cycling needs all-files access to write BRouter routing tiles into /sdcard/brouter/segments4/. Tap "Open settings" and toggle "Allow management of all files".</string>
+    <string name="data_permission_open_settings">Open settings</string>
+    <string name="data_country_unknown">No offline map available for this region. Routing will still work; the preview will be blank.</string>
 </resources>
