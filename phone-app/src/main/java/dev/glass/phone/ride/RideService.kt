@@ -196,11 +196,19 @@ class RideService : Service() {
             val png = if (r != null) {
                 try {
                     val turnLatLng = LatLng(turn.lat, turn.lon)
-                    val rotation = if (travelUp) {
-                        approachBearingDeg(route.track, turnLatLng)?.toFloat() ?: 0f
-                    } else 0f
+                    val approach = approachBearingDeg(route.track, turnLatLng)?.toFloat() ?: 0f
+                    val mapRotation = if (travelUp) approach else 0f
+                    // Arrow points along the direction of travel. When the map itself is
+                    // rotated travel-up, the arrow's screen-space rotation is 0 (it's drawn
+                    // after the canvas un-rotates).
+                    val arrowRotation = if (travelUp) 0f else approach
                     withContext(Dispatchers.Default) {
-                        r.render(turnLatLng, track = route.track, mapRotationDeg = rotation)
+                        r.render(
+                            turnLatLng,
+                            track = route.track,
+                            mapRotationDeg = mapRotation,
+                            arrowRotationDeg = arrowRotation,
+                        )
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "render failed for turn $idx", e)

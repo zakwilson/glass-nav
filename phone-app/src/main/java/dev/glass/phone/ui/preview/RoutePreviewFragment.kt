@@ -271,12 +271,25 @@ class RoutePreviewFragment : Fragment(R.layout.fragment_route_preview) {
 
     private fun drawRoute(track: List<LatLng>) {
         val mv = mapView ?: return
-        val paint = AndroidGraphicFactory.INSTANCE.createPaint()
-        paint.setColor(Color.RED)
-        paint.setStyle(Style.STROKE)
-        paint.setStrokeWidth(8f)
-        val poly = Polyline(paint, AndroidGraphicFactory.INSTANCE)
-        poly.latLongs.addAll(track.map { LatLong(it.lat, it.lon) })
+        val factory = AndroidGraphicFactory.INSTANCE
+        val latLongs = track.map { LatLong(it.lat, it.lon) }
+
+        val outlinePaint = factory.createPaint().apply {
+            setColor(Color.argb(0xCC, 0, 0, 0))
+            setStyle(Style.STROKE)
+            setStrokeWidth(18f)
+        }
+        val outline = Polyline(outlinePaint, factory)
+        outline.latLongs.addAll(latLongs)
+        mv.layerManager.layers.add(outline)
+
+        val strokePaint = factory.createPaint().apply {
+            setColor(Color.parseColor("#3B82F6"))
+            setStyle(Style.STROKE)
+            setStrokeWidth(12f)
+        }
+        val poly = Polyline(strokePaint, factory)
+        poly.latLongs.addAll(latLongs)
         mv.layerManager.layers.add(poly)
         if (track.isNotEmpty()) {
             val mid = track[track.size / 2]

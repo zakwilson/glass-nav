@@ -109,11 +109,7 @@ class SnippetRenderer(
             if (rotated) {
                 canvas.restore()
             }
-            if (arrowRotationDeg != null) {
-                drawArrow(canvas, arrowRotationDeg)
-            } else {
-                drawCrosshair(canvas)
-            }
+            drawArrow(canvas, arrowRotationDeg ?: 0f)
             ByteArrayOutputStream(64 * 1024).use { out ->
                 if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
                     throw IOException("bitmap.compress returned false")
@@ -181,14 +177,14 @@ class SnippetRenderer(
         }
         val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 10f
+            strokeWidth = 16f
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
-            color = Color.parseColor("#80000000")
+            color = Color.parseColor("#CC000000")
         }
         val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 6f
+            strokeWidth = 10f
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
             color = Color.parseColor("#3B82F6")
@@ -200,17 +196,17 @@ class SnippetRenderer(
     private fun drawArrow(canvas: Canvas, rotationDeg: Float) {
         val cx = width / 2f
         val cy = height / 2f
-        val r = 32f
+        val r = 42f
         val path = Path().apply {
             moveTo(cx, cy - r)
-            lineTo(cx + r * 0.7f, cy + r * 0.6f)
-            lineTo(cx, cy + r * 0.2f)
-            lineTo(cx - r * 0.7f, cy + r * 0.6f)
+            lineTo(cx + r * 0.75f, cy + r * 0.65f)
+            lineTo(cx, cy + r * 0.25f)
+            lineTo(cx - r * 0.75f, cy + r * 0.65f)
             close()
         }
         val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 4f
+            strokeWidth = 5f
             color = Color.BLACK
         }
         val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -222,19 +218,6 @@ class SnippetRenderer(
         canvas.drawPath(path, outline)
         canvas.drawPath(path, fill)
         canvas.restore()
-    }
-
-    private fun drawCrosshair(canvas: Canvas) {
-        val cx = width / 2f
-        val cy = height / 2f
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#FFA94D")
-            style = Paint.Style.STROKE
-            strokeWidth = 4f
-        }
-        canvas.drawCircle(cx, cy, 14f, paint)
-        canvas.drawLine(cx - 24f, cy, cx + 24f, cy, paint)
-        canvas.drawLine(cx, cy - 24f, cx, cy + 24f, paint)
     }
 
     /** Release rendering resources. Safe to call multiple times. */

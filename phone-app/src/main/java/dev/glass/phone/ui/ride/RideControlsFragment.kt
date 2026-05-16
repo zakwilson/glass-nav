@@ -10,8 +10,11 @@ import androidx.fragment.app.activityViewModels
 import com.google.android.material.button.MaterialButton
 import dev.glass.phone.R
 import dev.glass.phone.render.MapDataSource
+import dev.glass.phone.render.MapTheme
+import dev.glass.phone.render.PositionArrowMarker
 import dev.glass.phone.ride.RideService
 import dev.glass.phone.routing.LatLng
+import dev.glass.phone.routing.approachBearingDeg
 import dev.glass.phone.ui.OrientationPrefs
 import dev.glass.phone.ui.RideViewModel
 import org.mapsforge.core.graphics.Style
@@ -20,11 +23,9 @@ import org.mapsforge.map.android.graphics.AndroidGraphicFactory
 import org.mapsforge.map.android.util.AndroidUtil
 import org.mapsforge.map.android.view.MapView
 import org.mapsforge.map.datastore.MapDataStore
-import org.mapsforge.map.layer.overlay.Circle
 import org.mapsforge.map.layer.overlay.Polyline
 import org.mapsforge.map.layer.renderer.TileRendererLayer
 import org.mapsforge.map.reader.MapFile
-import org.mapsforge.map.rendertheme.internal.MapsforgeThemes
 
 /**
  * Active-ride view. Subscribes to {@link RideService} updates via a static callback (no IPC needed
@@ -35,9 +36,10 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
     private val viewModel: RideViewModel by activityViewModels()
     private var mapView: MapView? = null
     private var rendererLayer: TileRendererLayer? = null
-    private var positionMarker: Circle? = null
+    private var positionMarker: PositionArrowMarker? = null
     private var hasRecenteredOnFirstFix = false
     private var routePolyline: Polyline? = null
+    private var routeOutline: Polyline? = null
     private var lastConnectionStatus: String = ""
     private var orientationToggle: MaterialButton? = null
     private var lastBearingDeg: Float? = null
@@ -92,11 +94,11 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
             }
             override fun onLocationUpdate(location: LatLng, bearingDeg: Float?) {
                 view.post {
-                    updatePositionMarker(location)
                     if (bearingDeg != null) {
                         lastBearingDeg = bearingDeg
                         applyMapRotation()
                     }
+                    updatePositionMarker(location)
                 }
             }
             override fun onRerouteStateChange(message: String?) {
@@ -143,7 +145,7 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
             tileCache, store, mv.model.mapViewPosition,
             AndroidGraphicFactory.INSTANCE,
         )
-        layer.setXmlRenderTheme(MapsforgeThemes.OSMARENDER)
+        layer.setXmlRenderTheme(MapTheme.theme())
         mv.layerManager.layers.add(layer)
         rendererLayer = layer
     }
@@ -165,13 +167,29 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
 
     private fun redrawRoute(track: List<LatLng>) {
         val mv = mapView ?: return
+        routeOutline?.let { mv.layerManager.layers.remove(it) }
         routePolyline?.let { mv.layerManager.layers.remove(it) }
-        val paint = AndroidGraphicFactory.INSTANCE.createPaint()
-        paint.setColor(Color.RED)
-        paint.setStyle(Style.STROKE)
-        paint.setStrokeWidth(8f)
-        val poly = Polyline(paint, AndroidGraphicFactory.INSTANCE)
-        poly.latLongs.addAll(track.map { LatLong(it.lat, it.lon) })
+        val latLongs = track.map { LatLong(it.lat, it.lon) }
+        val factory = AndroidGraphicFactory.INSTANCE
+        // Dark casing under a bright stroke gives the route enough contrast against both
+        // light land tiles and dark water on the cycling theme.
+        val outlinePaint = factory.createPaint().apply {
+            setColor(Color.argb(0xCC, 0, 0, 0))
+            setStyle(Style.STROKE)
+            setStrokeWidth(18f)
+        }
+        val outline = Polyline(outlinePaint, factory)
+        outline.latLongs.addAll(latLongs)
+        mv.layerManager.layers.add(outline)
+        routeOutline = outline
+
+        val strokePaint = factory.createPaint().apply {
+            setColor(Color.parseColor("#3B82F6"))
+            setStyle(Style.STROKE)
+            setStrokeWidth(12f)
+        }
+        val poly = Polyline(strokePaint, factory)
+        poly.latLongs.addAll(latLongs)
         mv.layerManager.layers.add(poly)
         routePolyline = poly
     }
@@ -179,11 +197,16 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
     private fun updatePositionMarker(location: LatLng) {
         val mv = mapView ?: return
         val point = LatLong(location.lat, location.lon)
-        val marker = positionMarker ?: createPositionMarker().also {
+        val marker = positionMarker ?: PositionArrowMarker(requireContext()).also {
             positionMarker = it
             mv.layerManager.layers.add(it)
         }
         marker.setLatLong(point)
+        // Prefer the GPS bearing; if standing still or speed is too low for a fix, fall
+        // back to the route's intended direction at the user's position so the arrow still
+        // tells them which way they should be heading.
+        val bearing = lastBearingDeg ?: intendedBearingDeg(location)
+        marker.setBearing(bearing)
         marker.requestRedraw()
         if (!hasRecenteredOnFirstFix) {
             hasRecenteredOnFirstFix = true
@@ -194,18 +217,14 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
         }
     }
 
-    private fun createPositionMarker(): Circle {
-        val factory = AndroidGraphicFactory.INSTANCE
-        val fill = factory.createPaint().apply {
-            setColor(Color.parseColor("#3B82F6"))
-            setStyle(Style.FILL)
+    private fun intendedBearingDeg(at: LatLng): Float? {
+        val state = viewModel.route.value
+        val track = when (state) {
+            is RideViewModel.RouteState.Active -> state.ready.track
+            is RideViewModel.RouteState.Ready -> state.track
+            else -> return null
         }
-        val stroke = factory.createPaint().apply {
-            setColor(Color.WHITE)
-            setStyle(Style.STROKE)
-            setStrokeWidth(4f)
-        }
-        return Circle(null, 8f, fill, stroke)
+        return approachBearingDeg(track, at)?.toFloat()
     }
 
     override fun onDestroyView() {
@@ -216,6 +235,7 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
         rendererLayer = null
         positionMarker = null
         routePolyline = null
+        routeOutline = null
         orientationToggle = null
         hasRecenteredOnFirstFix = false
     }
