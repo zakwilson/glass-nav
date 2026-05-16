@@ -89,7 +89,8 @@ class RideService : Service() {
                         if (route != null) startPipeline(t, route)
                     }
                     override fun onPacket(p: Packet) {
-                        if (p is Packet.Pong) Log.d(TAG, "pong rtt=${System.currentTimeMillis() - p.echoTimestampMs}")
+                        // Phone is the receiver; Glass currently sends no packets. Ping/Pong is
+                        // handled inside the Transport (see Keepalive) and is not surfaced here.
                     }
                     override fun onDisconnected(cause: Throwable?) {
                         val msg = cause?.message ?: "clean EOF"

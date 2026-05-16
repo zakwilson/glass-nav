@@ -37,6 +37,7 @@ public final class PacketDispatcher implements Transport.Listener {
 
     @Override public void onConnected() {
         Log.i(TAG, "connected");
+        service.onTransportConnected();
         service.updateRemoteViews(null, null, "");
     }
 
@@ -105,7 +106,7 @@ public final class PacketDispatcher implements Transport.Listener {
         activeTurnIndex = -1;
         lastApproachSpokenTurn = -1;
         lastImminentSpokenTurn = -1;
-        service.updateRemoteViews(null, "Phone disconnected", "");
+        service.onTransportDisconnected();
     }
 
     private static long key(long routeId, int turnIndex) {

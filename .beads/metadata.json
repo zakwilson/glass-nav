@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "glass_nav",
+  "project_id": "47a38728-677d-43aa-94ac-0a4d32c41437"
+}

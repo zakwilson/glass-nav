@@ -7,6 +7,7 @@ import android.util.Log
 import dev.glass.protocol.FrameReader
 import dev.glass.protocol.FrameWriter
 import dev.glass.protocol.Packet
+import dev.glass.protocol.transport.Keepalive
 import dev.glass.protocol.transport.Transport
 import java.io.IOException
 import java.lang.reflect.InvocationTargetException
@@ -71,9 +72,20 @@ class RfcommTransport(
                 val reader = FrameReader(socket!!.inputStream)
                 listener?.onConnected()
                 backoff = INITIAL_BACKOFF_MS
-                while (running.get()) {
-                    val p = reader.readNext() ?: break
-                    listener?.onPacket(p)
+                val keepalive = Keepalive(
+                    /* sendPings = */ true,
+                    { p -> try { writer?.write(p) } catch (_: Throwable) {} },
+                    { try { socket?.close() } catch (_: Throwable) {} },
+                )
+                keepalive.start()
+                try {
+                    while (running.get()) {
+                        val p = reader.readNext() ?: break
+                        if (keepalive.handleInbound(p)) continue
+                        listener?.onPacket(p)
+                    }
+                } finally {
+                    keepalive.stop()
                 }
                 listener?.onDisconnected(null)
             } catch (t: Throwable) {

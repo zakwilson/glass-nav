@@ -8,6 +8,7 @@ import android.util.Log;
 import dev.glass.protocol.FrameReader;
 import dev.glass.protocol.FrameWriter;
 import dev.glass.protocol.Packet;
+import dev.glass.protocol.transport.Keepalive;
 import dev.glass.protocol.transport.Transport;
 
 import java.io.IOException;
@@ -97,14 +98,22 @@ public final class RfcommServerTransport implements Transport {
 
     private void run() {
         while (running.get()) {
+            Keepalive keepalive = null;
             try {
                 socket = serverSocket.accept();
                 writer = new FrameWriter(socket.getOutputStream());
                 FrameReader reader = new FrameReader(socket.getInputStream());
                 if (listener != null) listener.onConnected();
+                final BluetoothSocket sessionSocket = socket;
+                keepalive = new Keepalive(
+                        /* sendPings = */ false,
+                        p -> { FrameWriter w = writer; if (w != null) { try { w.write(p); } catch (Throwable ignored) {} } },
+                        () -> { try { sessionSocket.close(); } catch (Throwable ignored) {} });
+                keepalive.start();
                 while (running.get()) {
                     Packet p = reader.readNext();
                     if (p == null) break;
+                    if (keepalive.handleInbound(p)) continue;
                     if (listener != null) listener.onPacket(p);
                 }
                 if (listener != null) listener.onDisconnected(null);
@@ -112,6 +121,7 @@ public final class RfcommServerTransport implements Transport {
                 Log.w(TAG, "RFCOMM session error: " + t.getMessage());
                 if (listener != null) listener.onDisconnected(t);
             } finally {
+                if (keepalive != null) keepalive.stop();
                 writer = null;
                 try { if (socket != null) socket.close(); } catch (IOException ignored) {}
                 socket = null;

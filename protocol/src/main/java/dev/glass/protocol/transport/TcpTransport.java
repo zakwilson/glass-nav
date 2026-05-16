@@ -79,20 +79,29 @@ public final class TcpTransport implements Transport {
         // Accept loop: serve one connection at a time, re-accept after disconnect.
         while (running.get()) {
             Throwable cause = null;
+            Keepalive keepalive = null;
             try {
                 socket = serverSocket.accept();
                 socket.setTcpNoDelay(true);
                 writer = new FrameWriter(socket.getOutputStream());
                 FrameReader reader = new FrameReader(socket.getInputStream());
                 if (listener != null) listener.onConnected();
+                final Socket sessionSocket = socket;
+                keepalive = new Keepalive(
+                        /* sendPings = */ false,
+                        p -> { FrameWriter w = writer; if (w != null) { try { w.write(p); } catch (Throwable ignored) {} } },
+                        () -> { try { sessionSocket.close(); } catch (Throwable ignored) {} });
+                keepalive.start();
                 while (running.get()) {
                     Packet p = reader.readNext();
                     if (p == null) break;
+                    if (keepalive.handleInbound(p)) continue;
                     if (listener != null) listener.onPacket(p);
                 }
             } catch (Throwable t) {
                 cause = t;
             } finally {
+                if (keepalive != null) keepalive.stop();
                 try { if (socket != null) socket.close(); } catch (IOException ignored) {}
                 writer = null;
                 if (listener != null) listener.onDisconnected(cause);
@@ -104,6 +113,7 @@ public final class TcpTransport implements Transport {
 
     private void runClient() {
         Throwable cause = null;
+        Keepalive keepalive = null;
         try {
             socket = new Socket();
             socket.connect(new InetSocketAddress(host, port), 5_000);
@@ -111,14 +121,22 @@ public final class TcpTransport implements Transport {
             writer = new FrameWriter(socket.getOutputStream());
             FrameReader reader = new FrameReader(socket.getInputStream());
             if (listener != null) listener.onConnected();
+            final Socket sessionSocket = socket;
+            keepalive = new Keepalive(
+                    /* sendPings = */ true,
+                    p -> { FrameWriter w = writer; if (w != null) { try { w.write(p); } catch (Throwable ignored) {} } },
+                    () -> { try { sessionSocket.close(); } catch (Throwable ignored) {} });
+            keepalive.start();
             while (running.get()) {
                 Packet p = reader.readNext();
                 if (p == null) break;
+                if (keepalive.handleInbound(p)) continue;
                 if (listener != null) listener.onPacket(p);
             }
         } catch (Throwable t) {
             cause = t;
         } finally {
+            if (keepalive != null) keepalive.stop();
             try { if (socket != null) socket.close(); } catch (IOException ignored) {}
             writer = null;
             running.set(false);

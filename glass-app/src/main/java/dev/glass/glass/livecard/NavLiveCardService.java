@@ -6,7 +6,9 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
 import android.widget.RemoteViews;
@@ -29,19 +31,30 @@ public class NavLiveCardService extends Service {
     private static final String TAG = "NavLiveCardService";
     private static final String LIVECARD_TAG = "dev.glass.glass.nav";
 
+    /** Grace period before surfacing a "DISCONNECTED" alert — covers brief BT hiccups during
+     *  which the phone-side reconnect with exponential backoff usually recovers. */
+    private static final long DISCONNECT_ALERT_DELAY_MS = 10_000L;
+    /** Maximum time to hold the screen on after the disconnect alert fires. The LiveCard still
+     *  displays "DISCONNECTED" once the screen dims; this just bounds battery drain. */
+    private static final long DISCONNECT_WAKE_MS = 60_000L;
+
     private LiveCard liveCard;
     private RemoteViews views;
     private Transport transport;
     private TtsSpeaker speaker;
     private PowerManager.WakeLock screenWake;
+    private PowerManager.WakeLock disconnectWake;
     private int approachingTurnIndex = -1;
     private boolean hasNavContent = false;
     private BroadcastReceiver screenOnReceiver;
+    private Handler mainHandler;
+    private final Runnable disconnectAlertRunnable = this::showDisconnectAlert;
 
     @Override
     public void onCreate() {
         super.onCreate();
         Log.i(TAG, "onCreate");
+        mainHandler = new Handler(Looper.getMainLooper());
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (pm != null) {
             // SCREEN_BRIGHT_WAKE_LOCK is deprecated on modern Android but is the standard
@@ -51,6 +64,10 @@ public class NavLiveCardService extends Service {
                 PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 TAG + ":turnApproach");
             screenWake.setReferenceCounted(false);
+            disconnectWake = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                TAG + ":disconnected");
+            disconnectWake.setReferenceCounted(false);
         }
         views = new RemoteViews(getPackageName(), R.layout.livecard_nav);
         try {
@@ -107,6 +124,9 @@ public class NavLiveCardService extends Service {
     /** Called by {@code PacketDispatcher} when a new snippet/text/distance update arrives. */
     public void updateRemoteViews(byte[] pngBytes, String instruction, String distance) {
         if (views == null) return;
+        // Reset any oversized "DISCONNECTED" text back to the normal instruction size — see
+        // showDisconnectAlert().
+        views.setFloat(R.id.instruction, "setTextSize", 22f);
         if (pngBytes != null && pngBytes.length > 0) {
             android.graphics.Bitmap bm = android.graphics.BitmapFactory
                 .decodeByteArray(pngBytes, 0, pngBytes.length);
@@ -123,6 +143,60 @@ public class NavLiveCardService extends Service {
                 liveCard.setViews(views);
             } catch (Throwable t) {
                 Log.w(TAG, "setViews failed: " + t.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Called by {@code PacketDispatcher} when the transport reports a disconnect. We don't fire
+     * the alert immediately — the phone reconnects with exponential backoff and a brief BT hiccup
+     * is the common case. After a {@value #DISCONNECT_ALERT_DELAY_MS}ms grace period we wake the
+     * screen and surface a fullscreen "DISCONNECTED" message until {@link #onTransportConnected}
+     * is invoked.
+     */
+    public void onTransportDisconnected() {
+        if (mainHandler == null) return;
+        mainHandler.removeCallbacks(disconnectAlertRunnable);
+        mainHandler.postDelayed(disconnectAlertRunnable, DISCONNECT_ALERT_DELAY_MS);
+    }
+
+    /** Cancel any pending disconnect alert, release the disconnect wake lock, and clear any
+     *  "DISCONNECTED" text left over from a previous alert so the user sees an empty card while
+     *  fresh nav packets are en route. */
+    public void onTransportConnected() {
+        if (mainHandler != null) mainHandler.removeCallbacks(disconnectAlertRunnable);
+        if (disconnectWake != null && disconnectWake.isHeld()) {
+            try { disconnectWake.release(); } catch (Throwable t) {
+                Log.w(TAG, "disconnectWake.release failed: " + t.getMessage());
+            }
+        }
+        if (views != null) {
+            views.setFloat(R.id.instruction, "setTextSize", 22f);
+            views.setTextViewText(R.id.instruction, "");
+        }
+    }
+
+    private void showDisconnectAlert() {
+        Log.w(TAG, "phone still disconnected after grace period — alerting user");
+        if (views != null) {
+            // Oversize the instruction TextView so DISCONNECTED reads at a glance from the riding
+            // position; updateRemoteViews resets it back to 22sp on the next nav update.
+            views.setFloat(R.id.instruction, "setTextSize", 48f);
+            views.setTextViewText(R.id.instruction, "DISCONNECTED");
+            views.setTextViewText(R.id.distance, "");
+            views.setImageViewResource(R.id.snippet, android.R.color.black);
+            if (liveCard != null) {
+                try { liveCard.setViews(views); } catch (Throwable t) {
+                    Log.w(TAG, "setViews failed: " + t.getMessage());
+                }
+                try { liveCard.navigate(); } catch (Throwable t) {
+                    Log.w(TAG, "liveCard.navigate failed: " + t.getMessage());
+                }
+            }
+        }
+        if (disconnectWake != null && !disconnectWake.isHeld()) {
+            try { disconnectWake.acquire(DISCONNECT_WAKE_MS); } catch (Throwable t) {
+                Log.w(TAG, "disconnectWake.acquire failed: " + t.getMessage());
             }
         }
     }
@@ -185,6 +259,14 @@ public class NavLiveCardService extends Service {
         if (screenWake != null) {
             try { if (screenWake.isHeld()) screenWake.release(); } catch (Throwable ignored) {}
             screenWake = null;
+        }
+        if (disconnectWake != null) {
+            try { if (disconnectWake.isHeld()) disconnectWake.release(); } catch (Throwable ignored) {}
+            disconnectWake = null;
+        }
+        if (mainHandler != null) {
+            mainHandler.removeCallbacks(disconnectAlertRunnable);
+            mainHandler = null;
         }
         approachingTurnIndex = -1;
         hasNavContent = false;
