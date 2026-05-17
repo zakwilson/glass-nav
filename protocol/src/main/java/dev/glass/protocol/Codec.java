@@ -116,6 +116,14 @@ public final class Codec {
                 out.writeShort(pr.distanceToTurnM & 0xffff);
                 out.writeShort(pr.bearingDelta100);
                 out.writeShort(pr.speedKmh & 0xffff);
+                out.writeShort(pr.remainingDistanceM & 0xffff);
+                out.writeShort(pr.etaSec & 0xffff);
+                break;
+            }
+            case DISPLAY_CONFIG: {
+                Packet.DisplayConfig d = (Packet.DisplayConfig) p;
+                out.writeByte(d.topSlot.ordinal() & 0xff);
+                out.writeByte(d.bottomSlot.ordinal() & 0xff);
                 break;
             }
             case ROUTE_END: {
@@ -170,7 +178,17 @@ public final class Codec {
                 int distToTurn = in.readUnsignedShort();
                 short bearing100 = in.readShort();
                 int speedKmh = in.readUnsignedShort();
-                return new Packet.Progress(routeId, turnIndex, distToTurn, bearing100, speedKmh);
+                int remainingM = in.readUnsignedShort();
+                int etaSec = in.readUnsignedShort();
+                return new Packet.Progress(routeId, turnIndex, distToTurn, bearing100, speedKmh,
+                    remainingM, etaSec);
+            }
+            case DISPLAY_CONFIG: {
+                int topOrd = in.readUnsignedByte();
+                int bottomOrd = in.readUnsignedByte();
+                return new Packet.DisplayConfig(
+                    Packet.DisplayConfig.Field.fromCode(topOrd),
+                    Packet.DisplayConfig.Field.fromCode(bottomOrd));
             }
             case ROUTE_END: {
                 long routeId = in.readInt() & 0xffffffffL;

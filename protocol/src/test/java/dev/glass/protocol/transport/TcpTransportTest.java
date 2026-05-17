@@ -53,7 +53,7 @@ class TcpTransportTest {
                 Packet p = (i % 4 == 0)
                     ? new Packet.TurnBundle(7L, i, TurnKind.TR, i * 10, "Turn " + i,
                         randomBytes(1024 + rnd.nextInt(4096), rnd.nextLong()))
-                    : new Packet.Progress(7L, i, 100 - i, (short) (i * 100 - 5000), i % 60);
+                    : new Packet.Progress(7L, i, 100 - i, (short) (i * 100 - 5000), i % 60, 0, 0);
                 client.send(p);
             }
 

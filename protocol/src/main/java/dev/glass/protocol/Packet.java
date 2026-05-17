@@ -98,14 +98,18 @@ public abstract class Packet {
         public final int distanceToTurnM;     // uint16
         public final short bearingDelta100;   // int16, centidegrees
         public final int speedKmh;            // uint16
+        public final int remainingDistanceM;  // uint16, meters from current position to arrival
+        public final int etaSec;              // uint16, seconds remaining to arrival
 
         public Progress(long routeId, int turnIndex, int distanceToTurnM, short bearingDelta100,
-                        int speedKmh) {
+                        int speedKmh, int remainingDistanceM, int etaSec) {
             this.routeId = routeId;
             this.turnIndex = turnIndex;
             this.distanceToTurnM = distanceToTurnM;
             this.bearingDelta100 = bearingDelta100;
             this.speedKmh = speedKmh;
+            this.remainingDistanceM = remainingDistanceM;
+            this.etaSec = etaSec;
         }
 
         @Override public PacketType type() { return PacketType.PROGRESS; }
@@ -115,15 +119,56 @@ public abstract class Packet {
             Progress p = (Progress) o;
             return routeId == p.routeId && turnIndex == p.turnIndex
                 && distanceToTurnM == p.distanceToTurnM && bearingDelta100 == p.bearingDelta100
-                && speedKmh == p.speedKmh;
+                && speedKmh == p.speedKmh
+                && remainingDistanceM == p.remainingDistanceM && etaSec == p.etaSec;
         }
         @Override public int hashCode() {
-            return Objects.hash(routeId, turnIndex, distanceToTurnM, bearingDelta100, speedKmh);
+            return Objects.hash(routeId, turnIndex, distanceToTurnM, bearingDelta100, speedKmh,
+                remainingDistanceM, etaSec);
         }
         @Override public String toString() {
             return "Progress(id=" + routeId + ", #" + turnIndex + ", " + distanceToTurnM
-                + "m, bearing=" + (bearingDelta100 / 100.0) + "°, " + speedKmh + "km/h)";
+                + "m, bearing=" + (bearingDelta100 / 100.0) + "°, " + speedKmh + "km/h, rem="
+                + remainingDistanceM + "m, eta=" + etaSec + "s)";
         }
+    }
+
+    /**
+     * Phone → Glass: which data field each Glass display slot should render. Sent on connect and
+     * whenever the user changes their selection. Glass stores the most recent config and applies it
+     * to subsequent updates.
+     */
+    public static final class DisplayConfig extends Packet {
+        public enum Field {
+            TURN_INSTRUCTION,
+            DISTANCE_TO_TURN,
+            REMAINING_DISTANCE,
+            ETA,
+            SPEED;
+            public static Field fromCode(int b) throws ProtocolException {
+                Field[] vs = values();
+                if (b < 0 || b >= vs.length) throw new ProtocolException("unknown DisplayConfig field " + b);
+                return vs[b];
+            }
+        }
+
+        public final Field topSlot;
+        public final Field bottomSlot;
+
+        public DisplayConfig(Field topSlot, Field bottomSlot) {
+            this.topSlot = Objects.requireNonNull(topSlot);
+            this.bottomSlot = Objects.requireNonNull(bottomSlot);
+        }
+
+        @Override public PacketType type() { return PacketType.DISPLAY_CONFIG; }
+
+        @Override public boolean equals(Object o) {
+            if (!(o instanceof DisplayConfig)) return false;
+            DisplayConfig d = (DisplayConfig) o;
+            return topSlot == d.topSlot && bottomSlot == d.bottomSlot;
+        }
+        @Override public int hashCode() { return Objects.hash(topSlot, bottomSlot); }
+        @Override public String toString() { return "DisplayConfig(top=" + topSlot + ", bottom=" + bottomSlot + ")"; }
     }
 
     public static final class RouteEnd extends Packet {

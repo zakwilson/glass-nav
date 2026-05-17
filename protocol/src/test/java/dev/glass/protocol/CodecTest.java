@@ -45,8 +45,17 @@ class CodecTest {
     }
 
     @Test void roundTripProgress() throws Exception {
-        Packet.Progress in = new Packet.Progress(7L, 3, 142, (short) -2750, 28);
+        Packet.Progress in = new Packet.Progress(7L, 3, 142, (short) -2750, 28, 4321, 900);
         assertThat(Codec.decode(Codec.encode(in))).isEqualTo(in);
+    }
+
+    @Test void roundTripDisplayConfig() throws Exception {
+        for (Packet.DisplayConfig.Field top : Packet.DisplayConfig.Field.values()) {
+            for (Packet.DisplayConfig.Field bot : Packet.DisplayConfig.Field.values()) {
+                Packet.DisplayConfig in = new Packet.DisplayConfig(top, bot);
+                assertThat(Codec.decode(Codec.encode(in))).isEqualTo(in);
+            }
+        }
     }
 
     @Test void roundTripRouteEnd() throws Exception {

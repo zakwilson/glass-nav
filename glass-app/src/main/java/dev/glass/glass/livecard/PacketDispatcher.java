@@ -42,6 +42,11 @@ public final class PacketDispatcher implements Transport.Listener {
     private int activeTurnIndex = -1;
     private int lastApproachSpokenTurn = -1;
     private int lastImminentSpokenTurn = -1;
+    /** Whether we've already spoken the "head north on X, then turn left in Y meters" preamble. */
+    private boolean initialDirectionSpoken = false;
+    /** Most recently received display configuration from the phone. */
+    private Packet.DisplayConfig.Field topSlot = Packet.DisplayConfig.Field.TURN_INSTRUCTION;
+    private Packet.DisplayConfig.Field bottomSlot = Packet.DisplayConfig.Field.DISTANCE_TO_TURN;
 
     public PacketDispatcher(NavLiveCardService service) {
         this.service = service;
@@ -61,10 +66,17 @@ public final class PacketDispatcher implements Transport.Listener {
             cache.clear();
             lastApproachSpokenTurn = -1;
             lastImminentSpokenTurn = -1;
+            initialDirectionSpoken = false;
+        } else if (p instanceof Packet.DisplayConfig) {
+            Packet.DisplayConfig dc = (Packet.DisplayConfig) p;
+            Log.i(TAG, "DISPLAY_CONFIG top=" + dc.topSlot + " bottom=" + dc.bottomSlot);
+            topSlot = dc.topSlot;
+            bottomSlot = dc.bottomSlot;
         } else if (p instanceof Packet.TurnBundle) {
             Packet.TurnBundle tb = (Packet.TurnBundle) p;
             Log.d(TAG, "TURN_BUNDLE #" + tb.turnIndex + " " + tb.kind + " (" + tb.pngBytes.length + "B)");
             cache.put(key(tb.routeId, tb.turnIndex), tb);
+            maybeSpeakInitialDirection(tb.routeId);
         } else if (p instanceof Packet.Progress) {
             Packet.Progress pr = (Packet.Progress) p;
             Packet.TurnBundle tb = cache.get(key(pr.routeId, pr.turnIndex));
@@ -95,10 +107,10 @@ public final class PacketDispatcher implements Transport.Listener {
                     TtsSpeaker.utteranceFor(TtsSpeaker.Cue.IMMINENT, tb.kind, tb.instructionText, IMMINENT_THRESHOLD_M),
                     "imminent-" + pr.turnIndex);
             }
-            String distance = formatDistance(pr.distanceToTurnM);
-            String instruction = tb.instructionText;
-            Log.i(TAG, "PROGRESS #" + pr.turnIndex + " " + distance);
-            service.updateRemoteViews(tb.pngBytes, instruction, distance);
+            String top = renderField(topSlot, pr, tb);
+            String bottom = renderField(bottomSlot, pr, tb);
+            Log.i(TAG, "PROGRESS #" + pr.turnIndex + " top=" + top + " bottom=" + bottom);
+            service.updateRemoteViews(tb.pngBytes, top, bottom);
         } else if (p instanceof Packet.RouteEnd) {
             Packet.RouteEnd re = (Packet.RouteEnd) p;
             Log.i(TAG, "ROUTE_END id=" + re.routeId + " " + re.reason);
@@ -120,6 +132,59 @@ public final class PacketDispatcher implements Transport.Listener {
         lastApproachSpokenTurn = -1;
         lastImminentSpokenTurn = -1;
         service.onTransportDisconnected();
+    }
+
+    /**
+     * On the first non-START TurnBundle (typically index 1), build a "Head [start instruction] for
+     * X meters, then [first maneuver]" announcement and speak it once. Falls back gracefully if the
+     * START bundle hasn't arrived yet or if the route has only a START + ARRIVE pair.
+     */
+    private void maybeSpeakInitialDirection(long routeId) {
+        if (initialDirectionSpoken) return;
+        Packet.TurnBundle start = cache.get(key(routeId, 0));
+        Packet.TurnBundle first = cache.get(key(routeId, 1));
+        if (start == null || first == null) return;
+        initialDirectionSpoken = true;
+        String preamble = start.instructionText == null || start.instructionText.isEmpty()
+            ? "Start route" : start.instructionText;
+        String utterance;
+        if (first.kind == dev.glass.protocol.TurnKind.ARRIVE) {
+            utterance = preamble + " for " + first.distanceFromStartM + " meters, you have arrived";
+        } else {
+            String maneuver = TtsSpeaker.utteranceFor(
+                TtsSpeaker.Cue.IMMINENT, first.kind, first.instructionText, 0);
+            // utteranceFor(IMMINENT, ...) returns "<phrase> now"; we want just the phrase.
+            if (maneuver.endsWith(" now")) maneuver = maneuver.substring(0, maneuver.length() - 4);
+            utterance = preamble + " for " + first.distanceFromStartM + " meters, then " + maneuver;
+        }
+        service.speak(utterance, "initial-" + routeId);
+    }
+
+    private String renderField(
+        Packet.DisplayConfig.Field field, Packet.Progress pr, Packet.TurnBundle tb) {
+        switch (field) {
+            case TURN_INSTRUCTION:
+                return tb.instructionText == null ? "" : tb.instructionText;
+            case DISTANCE_TO_TURN:
+                return formatDistance(pr.distanceToTurnM);
+            case REMAINING_DISTANCE:
+                return formatDistance(pr.remainingDistanceM);
+            case ETA:
+                return formatDuration(pr.etaSec);
+            case SPEED:
+                return pr.speedKmh + " km/h";
+            default:
+                return "";
+        }
+    }
+
+    private static String formatDuration(int seconds) {
+        if (seconds < 60) return seconds + "s";
+        int mins = seconds / 60;
+        if (mins < 60) return mins + "m";
+        int hours = mins / 60;
+        int remMin = mins % 60;
+        return hours + "h " + remMin + "m";
     }
 
     private static long key(long routeId, int turnIndex) {

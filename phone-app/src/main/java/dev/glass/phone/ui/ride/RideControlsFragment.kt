@@ -15,8 +15,10 @@ import dev.glass.phone.render.PositionArrowMarker
 import dev.glass.phone.ride.RideService
 import dev.glass.phone.routing.LatLng
 import dev.glass.phone.routing.approachBearingDeg
+import dev.glass.phone.ui.DisplayPrefs
 import dev.glass.phone.ui.OrientationPrefs
 import dev.glass.phone.ui.RideViewModel
+import dev.glass.protocol.Packet
 import org.mapsforge.core.graphics.Style
 import org.mapsforge.core.model.LatLong
 import org.mapsforge.map.android.graphics.AndroidGraphicFactory
@@ -54,10 +56,16 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
         val mapContainer = view.findViewById<FrameLayout>(R.id.map_container)
         val stopBtn = view.findViewById<MaterialButton>(R.id.stop_button)
         val orientBtn = view.findViewById<MaterialButton>(R.id.orientation_toggle)
+        val displayBtn = view.findViewById<MaterialButton>(R.id.display_settings)
         orientationToggle = orientBtn
 
         turnText.text = "—"
         distanceText.text = "—"
+
+        displayBtn.setOnClickListener {
+            DisplaySettingsDialogFragment()
+                .show(parentFragmentManager, DisplaySettingsDialogFragment.TAG)
+        }
 
         stopBtn.setOnClickListener {
             // Keep the service + Bluetooth transport alive so the next route can push to Glass
@@ -86,10 +94,11 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
                 lastConnectionStatus = status
                 statusText.post { statusText.text = status }
             }
-            override fun onTurnUpdate(text: String, distanceM: Int) {
+            override fun onProgressUpdate(progress: RideService.Progress) {
+                val slots = DisplayPrefs.get(requireContext())
                 turnText.post {
-                    turnText.text = text
-                    distanceText.text = "$distanceM m"
+                    turnText.text = renderField(slots.phoneTop, progress)
+                    distanceText.text = renderField(slots.phoneBottom, progress)
                 }
             }
             override fun onLocationUpdate(location: LatLng, bearingDeg: Float?) {
@@ -215,6 +224,29 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
         } else {
             mv.setCenter(point)
         }
+    }
+
+    private fun renderField(
+        field: Packet.DisplayConfig.Field,
+        p: RideService.Progress,
+    ): String = when (field) {
+        Packet.DisplayConfig.Field.TURN_INSTRUCTION -> p.turnInstruction
+        Packet.DisplayConfig.Field.DISTANCE_TO_TURN -> formatDistance(p.distanceToTurnM)
+        Packet.DisplayConfig.Field.REMAINING_DISTANCE -> formatDistance(p.remainingDistanceM)
+        Packet.DisplayConfig.Field.ETA -> formatDuration(p.etaSec)
+        Packet.DisplayConfig.Field.SPEED -> "${p.speedKmh} km/h"
+    }
+
+    private fun formatDistance(meters: Int): String =
+        if (meters >= 1000) "%.1f km".format(meters / 1000f) else "$meters m"
+
+    private fun formatDuration(seconds: Int): String {
+        if (seconds < 60) return "${seconds}s"
+        val mins = seconds / 60
+        if (mins < 60) return "${mins}m"
+        val hours = mins / 60
+        val remMin = mins % 60
+        return "${hours}h ${remMin}m"
     }
 
     private fun intendedBearingDeg(at: LatLng): Float? {

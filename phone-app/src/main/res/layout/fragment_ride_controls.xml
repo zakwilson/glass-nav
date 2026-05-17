@@ -81,6 +81,19 @@
             app:iconSize="24dp"
             app:iconGravity="textStart"
             app:iconPadding="0dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/display_settings"
+            style="?attr/materialIconButtonFilledTonalStyle"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="top|start"
+            android:layout_margin="12dp"
+            android:contentDescription="@string/display_settings_desc"
+            app:icon="@android:drawable/ic_menu_preferences"
+            app:iconSize="24dp"
+            app:iconGravity="textStart"
+            app:iconPadding="0dp" />
     </FrameLayout>
 
     <com.google.android.material.button.MaterialButton

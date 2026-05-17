@@ -6,6 +6,7 @@ public enum PacketType {
     TURN_BUNDLE((byte) 0x02),
     PROGRESS((byte) 0x03),
     ROUTE_END((byte) 0x04),
+    DISPLAY_CONFIG((byte) 0x05),
     PING((byte) 0x7E),
     PONG((byte) 0x7F);
 

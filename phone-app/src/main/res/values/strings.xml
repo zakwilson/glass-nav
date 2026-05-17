@@ -33,4 +33,11 @@
     <string name="data_country_unknown">No offline map available for this region. Routing will still work; the preview will be blank.</string>
 
     <string name="orientation_toggle_desc">Toggle map orientation (north up / direction of travel up)</string>
+    <string name="display_settings_desc">Configure what is shown on the phone and Glass</string>
+    <string name="display_settings_title">Display</string>
+    <string name="display_phone_top_label">Phone — top</string>
+    <string name="display_phone_bottom_label">Phone — bottom</string>
+    <string name="display_glass_top_label">Glass — top</string>
+    <string name="display_glass_bottom_label">Glass — bottom</string>
+    <string name="display_save">Save</string>
 </resources>
