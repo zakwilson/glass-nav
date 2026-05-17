@@ -419,7 +419,7 @@ class RideService : Service() {
         const val TAG = "RideService"
         private const val NOTIFICATION_ID = 0xCAFE
         private const val CHANNEL_ID = "ride"
-        private const val REROUTE_COOLDOWN_MS = 30_000L
+        private const val REROUTE_COOLDOWN_MS = 5_000L
         private val EMPTY_BYTES = ByteArray(0)
         /** Roughly 30 seconds at 1 Hz fixes — long enough to smooth traffic-light pauses without
          *  lagging too far behind a real speed change. */

@@ -11,8 +11,10 @@ import kotlin.math.max
  * Projects the rider's current GPS fix onto a planned route polyline + turn list, returning the
  * upcoming turn index, the distance to that turn (in meters), and an off-route flag.
  *
- * Off-route: if the perpendicular distance from the fix to the polyline exceeds {@link OFF_ROUTE_M}
- * for two consecutive calls, we report off-route to the caller (which will trigger a recompute).
+ * Off-route: a rolling window of the last [WINDOW_SIZE] fixes is kept; when at least
+ * [OFF_ROUTE_TRIGGER] of them have perpendicular distance > [OFF_ROUTE_M], we report off-route.
+ * The window tolerates GPS jitter and parallel-road flicker that would otherwise reset a
+ * strict consecutive counter and stall the reroute.
  */
 class RouteMatcher(
     private val track: List<LatLng>,
@@ -20,7 +22,7 @@ class RouteMatcher(
     private val cumulativeM: DoubleArray = cumulativeMeters(track),
 ) {
 
-    private var consecutiveOffRoute = 0
+    private val offRouteWindow = ArrayDeque<Boolean>(WINDOW_SIZE)
 
     data class Match(
         val nextTurnIndex: Int,
@@ -57,8 +59,9 @@ class RouteMatcher(
         }.let { if (it == -1) turns.lastIndex else it }
         val distToTurn = max(0, turns[nextTurnIdx].distanceFromStartM - distFromStart)
         val isOff = bestPerp > OFF_ROUTE_M
-        consecutiveOffRoute = if (isOff) consecutiveOffRoute + 1 else 0
-        val reportOff = consecutiveOffRoute >= 2
+        offRouteWindow.addLast(isOff)
+        while (offRouteWindow.size > WINDOW_SIZE) offRouteWindow.removeFirst()
+        val reportOff = offRouteWindow.count { it } >= OFF_ROUTE_TRIGGER
         return Match(
             nextTurnIndex = nextTurnIdx,
             distanceToTurnM = distToTurn,
@@ -88,5 +91,9 @@ class RouteMatcher(
 
     companion object {
         const val OFF_ROUTE_M = 50.0
+        /** Number of recent fixes considered when deciding off-route. ~10s at 1 Hz GPS. */
+        const val WINDOW_SIZE = 10
+        /** Off-route fixes within the window required to trigger a reroute. */
+        const val OFF_ROUTE_TRIGGER = 7
     }
 }
