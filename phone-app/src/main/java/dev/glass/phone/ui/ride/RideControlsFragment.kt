@@ -136,8 +136,11 @@ class RideControlsFragment : Fragment(R.layout.fragment_ride_controls) {
         mv.isClickable = true
         mv.mapScaleBar.isVisible = false
         mv.setBuiltInZoomControls(false)
+        // Insert at index 0 so the MapView sits beneath the overlay buttons declared in XML
+        // (FrameLayout draws later-added children on top).
         container.addView(
             mv,
+            0,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT,
